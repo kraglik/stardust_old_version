@@ -8,6 +8,7 @@ from stardust.events import *
 
 
 DONE = 'DONE'
+NICE = 'NICE'
 
 
 class Cell:
@@ -26,6 +27,7 @@ class Cell:
         self._current_behaviour = self.actor.receive
         self.executing_generator = None
         self.awaited_context = None
+        self.awaiting_asyncio = False
         self.awaited_response = None
         self.poisoned = False
         self.last_event = None
@@ -52,7 +54,22 @@ class Cell:
             resp = coroutine.send(None)
 
             while True:
-                if isinstance(resp, send):
+
+                if resp is None:
+                    resp = coroutine.send(None)
+
+                if not isinstance(resp, InternalFuture) and isinstance(resp, asyncio.Future):
+                    yield resp
+
+                elif isinstance(resp, ref):
+                    resp.set_result(self.ref)
+                    resp = coroutine.send(None)
+
+                elif isinstance(resp, get_event_loop):
+                    resp.set_result(worker.event_loop)
+                    resp = coroutine.send(None)
+
+                elif isinstance(resp, send):
                     yield SendEvent(
                         sender=self.ref,
                         target=resp.target,
@@ -93,10 +110,15 @@ class Cell:
                     resp = coroutine.send(None)
 
                 elif isinstance(resp, kill):
-                    response = yield KillRequestEvent(
+                    yield KillRequestEvent(
                         sender=self.ref,
                         target=resp.target
                     )
+                    resp.set_result(None)
+                    resp = coroutine.send(None)
+
+                elif isinstance(resp, nice):
+                    yield NICE
                     resp.set_result(None)
                     resp = coroutine.send(None)
 

@@ -1,6 +1,6 @@
 from stardust.actor import Actor, ActorRef
 from stardust.system import ActorSystem, Config
-from stardust.futures import send, ask, nice, spawn, kill, respond
+from stardust.futures import send, ask, nice, spawn, kill, respond, ref, get_event_loop
 from stardust.messages import StartupMessage
 
 
@@ -30,7 +30,7 @@ def main():
 
     pings = []
 
-    for i in range(12):
+    for i in range(100):
         ping = system.spawn(Ping)
         pings.append(ping)
 

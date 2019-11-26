@@ -4,14 +4,20 @@ from multiprocessing import Process, Queue as MPQueue
 from typing import Dict
 from queue import Queue
 from collections import deque
-from threading import Condition
+from threading import Condition, Thread
 
 from stardust.actor import ActorRef, Cell
-from stardust.actor.cell import DONE
+from stardust.actor.cell import DONE, NICE
 from stardust.events import *
+from stardust.futures import InternalFuture
 from stardust.system.types import CoreID
 from stardust.system.worker.incoming_event_manager import IncomingEventManager
 from stardust.system.worker.outgoing_event_manager import OutgoingEventManager
+
+
+def start_background_loop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
 
 
 class Worker(Process):
@@ -28,8 +34,8 @@ class Worker(Process):
         self.queue_map = queue_map
         self.output_queue = Queue()
         self.system_ref = system_ref
-        self.event_loop = asyncio.get_event_loop()
-
+        self.event_loop = None
+        self.asyncio_thread = None
         self.actor_to_core = dict()
 
         self.all_actors: Dict[ActorRef, Cell] = dict()
@@ -43,6 +49,9 @@ class Worker(Process):
         self.outgoing_event_manager = OutgoingEventManager(self)
 
     def run(self) -> None:
+        self.event_loop = asyncio.new_event_loop()
+        self.asyncio_thread = Thread(target=start_background_loop, args=(self.event_loop,), daemon=True)
+        self.asyncio_thread.start()
         self.incoming_event_manager.start()
         self.outgoing_event_manager.start()
 
@@ -93,13 +102,16 @@ class Worker(Process):
         gen = cell.executing_generator or cell.process(self)
         cell.executing_generator = None
 
-        resp = cell.awaited_response
+        event = cell.awaited_response
         cell.awaited_response = None
         cell.awaited_context = None
-        event = gen.send(resp)
+        event = gen.send(event)
 
         while True:
-            if isinstance(event, SpawnRequestEvent):
+            if event is None:
+                event = gen.send(None)
+
+            elif isinstance(event, SpawnRequestEvent):
                 cell.executing_generator = gen
                 cell.awaited_context = event.context_code
                 self.output_queue.put(event)
@@ -134,6 +146,10 @@ class Worker(Process):
             elif isinstance(event, KillRequestEvent):
                 self.output_queue.put(event)
                 event = gen.send(None)
+
+            elif event == NICE:
+                self.active_actors.append(cell)
+                break
 
             elif event == DONE:
                 if len(cell.mailbox) == 0:
