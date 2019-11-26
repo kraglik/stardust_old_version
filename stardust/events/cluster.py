@@ -1,0 +1,2 @@
+class ClusterLevelEvent:
+    pass
